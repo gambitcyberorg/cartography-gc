@@ -22,6 +22,7 @@ STATUS_KEYBOARD_INTERRUPT = 130
 
 # Help Panel Names - Used to organize options in --help output
 PANEL_CORE = "Core Options"
+PANEL_GRAPH_DB = "Graph Database"
 PANEL_NEO4J = "Neo4j Connection"
 PANEL_AWS = "AWS Options"
 PANEL_AZURE = "Azure Options"
@@ -118,7 +119,7 @@ MODULE_PANELS = {
 }
 
 # Panels that should always be shown (not module-specific)
-ALWAYS_SHOW_PANELS = {PANEL_CORE, PANEL_NEO4J, PANEL_STATSD, PANEL_ANALYSIS}
+ALWAYS_SHOW_PANELS = {PANEL_CORE, PANEL_GRAPH_DB, PANEL_NEO4J, PANEL_STATSD, PANEL_ANALYSIS}
 
 
 def _version_callback(value: bool) -> None:
@@ -347,6 +348,21 @@ class CLI:
                     rich_help_panel=PANEL_CORE,
                 ),
             ] = None,
+            # =================================================================
+            # Graph Database Backend
+            # =================================================================
+            graph_backend: Annotated[
+                str,
+                typer.Option(
+                    "--graph-backend",
+                    help=(
+                        'The graph database backend to use. "neo4j" (default) or "memgraph". '
+                        "When set to memgraph, cartography generates Memgraph-compatible Cypher "
+                        "and skips Neo4j-specific driver options."
+                    ),
+                    rich_help_panel=PANEL_GRAPH_DB,
+                ),
+            ] = "neo4j",
             # =================================================================
             # Neo4j Connection Options
             # =================================================================
@@ -2263,6 +2279,7 @@ class CLI:
             # Build the Config object
             config = Config(
                 neo4j_uri=neo4j_uri,
+                graph_backend=graph_backend,
                 neo4j_user=neo4j_user,
                 neo4j_password=neo4j_password,
                 neo4j_max_connection_lifetime=neo4j_max_connection_lifetime,

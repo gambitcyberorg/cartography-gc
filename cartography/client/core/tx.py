@@ -14,6 +14,8 @@ import backoff
 import neo4j
 import neo4j.exceptions
 
+from cartography.graph.backend import is_memgraph
+from cartography.graph.backend import patch_cypher_for_memgraph
 from cartography.graph.querybuilder import build_conditional_label_queries
 from cartography.graph.querybuilder import build_create_index_queries
 from cartography.graph.querybuilder import build_create_index_queries_for_matchlink
@@ -283,6 +285,9 @@ def _run_index_query_with_retry(neo4j_session: neo4j.Session, query: str) -> Non
     we use CREATE INDEX IF NOT EXISTS, Neo4j has a race condition where concurrent
     index creation can fail if another session creates the index between the existence
     check and the actual creation.
+
+    For Memgraph, index creation without IF NOT EXISTS may raise a DatabaseError when
+    the index already exists. This is safe to ignore.
     """
     try:
         neo4j_session.run(query)
@@ -292,6 +297,15 @@ def _run_index_query_with_retry(neo4j_session: neo4j.Session, query: str) -> Non
         if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
             logger.debug(
                 f"Index already exists (likely created by parallel sync): {query}"
+            )
+            return
+        raise
+    except neo4j.exceptions.DatabaseError as e:
+        # Memgraph raises DatabaseError when an index already exists since it does not
+        # support CREATE INDEX IF NOT EXISTS. Safe to ignore.
+        if is_memgraph() and "already exists" in str(e).lower():
+            logger.debug(
+                f"Index already exists (Memgraph): {query}"
             )
             return
         raise
@@ -354,6 +368,10 @@ def run_write_query(
     :param parameters: Parameters to pass to the query
     :return: None
     """
+    # Patch Neo4j-specific Cypher (e.g. timestamp()) for Memgraph compatibility
+    query = patch_cypher_for_memgraph(query)
+    if is_memgraph():
+        parameters = {k: _sanitize_value(v) for k, v in parameters.items()}
 
     def _run_query_tx(tx: neo4j.Transaction) -> None:
         tx.run(query, **parameters).consume()
@@ -615,6 +633,31 @@ def write_list_of_dicts_tx(
     tx.run(query, kwargs).consume()
 
 
+def _sanitize_value(v: Any) -> Any:
+    """Recursively convert timezone-aware datetime values to ISO-format strings."""
+    import datetime
+
+    if isinstance(v, datetime.datetime) and v.tzinfo is not None:
+        return v.isoformat()
+    if isinstance(v, dict):
+        return {k: _sanitize_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_sanitize_value(item) for item in v]
+    return v
+
+
+def _sanitize_datetimes(dict_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert timezone-aware datetime values to ISO-format strings (recursively).
+
+    Memgraph crashes when receiving datetime objects with timezone info (e.g. tzutc())
+    via the Bolt protocol. This converts them to strings which Memgraph handles correctly.
+    """
+    return [
+        {k: _sanitize_value(v) for k, v in d.items()}
+        for d in dict_list
+    ]
+
+
 def load_graph_data(
     neo4j_session: neo4j.Session,
     query: str,
@@ -668,6 +711,16 @@ def load_graph_data(
     if batch_size <= 0:
         raise ValueError(f"batch_size must be greater than 0, got {batch_size}")
 
+    # Memgraph does not support the timestamp() Cypher function, so we pass
+    # the current epoch milliseconds as a query parameter instead.
+    if is_memgraph() and "FirstSeenTimestamp" not in kwargs:
+        kwargs["FirstSeenTimestamp"] = int(time.time() * 1000)
+
+    # Memgraph crashes when receiving timezone-aware datetime objects via Bolt.
+    # Convert them to ISO-format strings which Memgraph handles correctly.
+    if is_memgraph():
+        dict_list = _sanitize_datetimes(dict_list)
+
     for data_batch in batch(dict_list, size=batch_size):
         execute_write_with_retry(
             neo4j_session,
@@ -716,10 +769,11 @@ def ensure_indexes(
     """
     queries = build_create_index_queries(node_schema)
 
+    expected_prefix = "CREATE INDEX ON" if is_memgraph() else "CREATE INDEX IF NOT EXISTS"
     for query in queries:
-        if not query.startswith("CREATE INDEX IF NOT EXISTS"):
+        if not query.startswith(expected_prefix):
             raise ValueError(
-                'Query provided to `ensure_indexes()` does not start with "CREATE INDEX IF NOT EXISTS".',
+                f'Query provided to `ensure_indexes()` does not start with "{expected_prefix}".',
             )
         _run_index_query_with_retry(neo4j_session, query)
 
@@ -753,10 +807,11 @@ def ensure_indexes_for_matchlinks(
     """
     queries = build_create_index_queries_for_matchlink(rel_schema)
     logger.debug(f"CREATE INDEX queries for {rel_schema.rel_label}: {queries}")
+    expected_prefix = "CREATE INDEX ON" if is_memgraph() else "CREATE INDEX IF NOT EXISTS"
     for query in queries:
-        if not query.startswith("CREATE INDEX IF NOT EXISTS"):
+        if not query.startswith(expected_prefix):
             raise ValueError(
-                'Query provided to `ensure_indexes_for_matchlinks()` does not start with "CREATE INDEX IF NOT EXISTS".',
+                f'Query provided to `ensure_indexes_for_matchlinks()` does not start with "{expected_prefix}".',
             )
         _run_index_query_with_retry(neo4j_session, query)
 

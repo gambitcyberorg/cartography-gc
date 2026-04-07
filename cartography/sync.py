@@ -9,6 +9,8 @@ import neo4j.exceptions
 from neo4j import GraphDatabase
 from statsd import StatsClient
 
+from cartography.graph.backend import set_graph_backend
+
 import cartography.intel.aibom
 import cartography.intel.airbyte
 import cartography.intel.analysis
@@ -243,7 +245,11 @@ class Sync:
             and debugging purposes.
         """
         logger.info("Starting sync with update tag '%d'", config.update_tag)
-        with neo4j_driver.session(database=config.neo4j_database) as neo4j_session:
+        # Memgraph does not support multi-database; only pass database param for Neo4j
+        session_kwargs = {}
+        if config.graph_backend != "memgraph" and config.neo4j_database:
+            session_kwargs["database"] = config.neo4j_database
+        with neo4j_driver.session(**session_kwargs) as neo4j_session:
             for stage_name, stage_func in self._stages.items():
                 logger.info("Starting sync stage '%s'", stage_name)
                 try:
@@ -385,6 +391,10 @@ def run_with_config(sync: Sync, config: Config) -> int:
         If StatsD is enabled in the configuration, it initializes the global
         StatsD client for metrics collection during the sync process.
     """
+    # Set the graph database backend globally before any queries are built
+    set_graph_backend(config.graph_backend)
+    logger.info("Using graph database backend: %s", config.graph_backend)
+
     # Initialize statsd client if enabled
     if config.statsd_enabled:
         set_stats_client(
@@ -399,15 +409,27 @@ def run_with_config(sync: Sync, config: Config) -> int:
     if config.neo4j_user or config.neo4j_password:
         neo4j_auth = (config.neo4j_user, config.neo4j_password)
     driver_kwargs = {}
-    optional_driver_kwargs = {
-        "max_connection_lifetime": config.neo4j_max_connection_lifetime,
-        "liveness_check_timeout": config.neo4j_liveness_check_timeout,
-        "connection_timeout": config.neo4j_connection_timeout,
-        "keep_alive": config.neo4j_keep_alive,
-        "max_transaction_retry_time": config.neo4j_max_transaction_retry_time,
-        "max_connection_pool_size": config.neo4j_max_connection_pool_size,
-        "connection_acquisition_timeout": config.neo4j_connection_acquisition_timeout,
-    }
+    # Memgraph supports the Bolt protocol via the neo4j Python driver but does not
+    # support all Neo4j-specific driver parameters (e.g. liveness_check_timeout).
+    # Only include universally supported params when using Memgraph.
+    if config.graph_backend == "memgraph":
+        optional_driver_kwargs = {
+            "max_connection_lifetime": config.neo4j_max_connection_lifetime,
+            "connection_timeout": config.neo4j_connection_timeout,
+            "keep_alive": config.neo4j_keep_alive,
+            "max_connection_pool_size": config.neo4j_max_connection_pool_size,
+            "connection_acquisition_timeout": config.neo4j_connection_acquisition_timeout,
+        }
+    else:
+        optional_driver_kwargs = {
+            "max_connection_lifetime": config.neo4j_max_connection_lifetime,
+            "liveness_check_timeout": config.neo4j_liveness_check_timeout,
+            "connection_timeout": config.neo4j_connection_timeout,
+            "keep_alive": config.neo4j_keep_alive,
+            "max_transaction_retry_time": config.neo4j_max_transaction_retry_time,
+            "max_connection_pool_size": config.neo4j_max_connection_pool_size,
+            "connection_acquisition_timeout": config.neo4j_connection_acquisition_timeout,
+        }
     for key, value in optional_driver_kwargs.items():
         if value is not None:
             driver_kwargs[key] = value

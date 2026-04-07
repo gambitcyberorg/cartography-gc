@@ -12,6 +12,7 @@ from cartography.models.core.relationships import LinkDirection
 from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import SourceNodeMatcher
 from cartography.models.core.relationships import TargetNodeMatcher
+from cartography.graph.backend import is_memgraph
 from cartography.models.ontology.mapping import (
     get_semantic_label_mapping_from_node_schema,
 )
@@ -29,9 +30,20 @@ def _build_ontology_field_statement_invert_boolean(
     # coalesce will return the first non-null value, so if toBooleanOrNull returns null,
     # we invert the boolean value of the property_ref existence
     # ex: "false", "0", "no" => false; anything else => true; null/absent => true
-    invert_boolean_template = Template(
-        "i.$node_property = (NOT(coalesce(toBooleanOrNull($property_ref), false)))"
-    )
+    if is_memgraph():
+        # Memgraph does not support toBooleanOrNull(); use CASE expression instead
+        invert_boolean_template = Template(
+            "i.$node_property = (NOT(coalesce("
+            "CASE WHEN $property_ref IS NOT NULL THEN "
+            "CASE WHEN $property_ref IN [true, 'true', '1', 'yes'] THEN true "
+            "WHEN $property_ref IN [false, 'false', '0', 'no'] THEN false "
+            "ELSE null END ELSE null END"
+            ", false)))"
+        )
+    else:
+        invert_boolean_template = Template(
+            "i.$node_property = (NOT(coalesce(toBooleanOrNull($property_ref), false)))"
+        )
     return invert_boolean_template.safe_substitute(
         node_property=f"_ont_{mapping_field.ontology_field}",
         property_ref=property_ref,
@@ -42,14 +54,25 @@ def _build_ontology_field_statement_to_boolean(
     mapping_field: OntologyFieldMapping,
     property_ref: PropertyRef,
 ) -> str:
-    # toBoleanOrNull will return a boolean or null if it can't be converted
+    # toBooleanOrNull will return a boolean or null if it can't be converted
     # coalesce will return the first non-null value, so if toBooleanOrNull returns null,
     # it will return whether the property_ref is not null (i.e., true if property_ref exists)
     # this way, any non-null value is treated as true
     # ex: "true", "1", "yes" => true; anything else => true; null/absent => false
-    to_boolean_template = Template(
-        "i.$node_property = coalesce(toBooleanOrNull($property_ref), ($property_ref IS NOT NULL))"
-    )
+    if is_memgraph():
+        # Memgraph does not support toBooleanOrNull(); use CASE expression instead
+        to_boolean_template = Template(
+            "i.$node_property = coalesce("
+            "CASE WHEN $property_ref IS NOT NULL THEN "
+            "CASE WHEN $property_ref IN [true, 'true', '1', 'yes'] THEN true "
+            "WHEN $property_ref IN [false, 'false', '0', 'no'] THEN false "
+            "ELSE null END ELSE null END"
+            ", ($property_ref IS NOT NULL))"
+        )
+    else:
+        to_boolean_template = Template(
+            "i.$node_property = coalesce(toBooleanOrNull($property_ref), ($property_ref IS NOT NULL))"
+        )
     return to_boolean_template.safe_substitute(
         node_property=f"_ont_{mapping_field.ontology_field}",
         property_ref=property_ref,
@@ -713,12 +736,13 @@ def _build_attach_sub_resource_statement(
     if not sub_resource_link:
         return ""
 
+    firstseen_expr = "$FirstSeenTimestamp" if is_memgraph() else "timestamp()"
     sub_resource_attach_template = Template(
-        """
-        OPTIONAL MATCH (j:$SubResourceLabel{$MatchClause})
+        f"""
+        OPTIONAL MATCH (j:$SubResourceLabel{{$MatchClause}})
         WITH i, item, j WHERE j IS NOT NULL
         $RelMergeClause
-        ON CREATE SET r.firstseen = timestamp()
+        ON CREATE SET r.firstseen = {firstseen_expr}
         SET
             r._module_name = "$module_name",
             r._module_version = "$module_version",
@@ -807,14 +831,15 @@ def _build_attach_additional_links_statement(
     if not additional_relationships:
         return ""
 
+    firstseen_expr = "$FirstSeenTimestamp" if is_memgraph() else "timestamp()"
     additional_links_template = Template(
-        """
+        f"""
         OPTIONAL MATCH ($node_var:$AddlLabel)
         WHERE
             $WhereClause
         WITH i, item, $node_var WHERE $node_var IS NOT NULL
         $RelMerge
-        ON CREATE SET $rel_var.firstseen = timestamp()
+        ON CREATE SET $rel_var.firstseen = {firstseen_expr}
         SET
             $rel_var._module_name = "$module_name",
             $rel_var._module_version = "$module_version",
@@ -861,6 +886,9 @@ def _build_attach_additional_links_statement(
         )
         links.append(additional_ref)
 
+    if is_memgraph():
+        # Each UNION branch in a CALL subquery must import variables via WITH
+        return " UNION WITH i, item ".join(links)
     return "UNION".join(links)
 
 
@@ -930,16 +958,33 @@ def _build_attach_relationships_statement(
         [attach_additional_links_statement] if attach_additional_links_statement else []
     )
 
-    attach_relationships_statement = "UNION".join(stmt for stmt in statements)
-
-    query_template = Template(
-        """
+    if is_memgraph():
+        # Memgraph does not support CALL (vars) { } (Neo4j 5.x subquery syntax).
+        # Use the equivalent CALL { WITH vars ... UNION WITH vars ... } syntax instead.
+        # Each UNION branch must explicitly import variables via WITH.
+        # A trailing RETURN is required because Memgraph mandates that queries ending
+        # with a CALL subquery must produce results or perform a top-level write.
+        memgraph_branches = [f"WITH i, item {stmt}" for stmt in statements]
+        attach_relationships_statement = " UNION ".join(memgraph_branches)
+        query_template = Template(
+            """
+        WITH i, item
+        CALL {
+            $attach_relationships_statement
+        }
+        RETURN count(*) AS _c
+            """,
+        )
+    else:
+        attach_relationships_statement = "UNION".join(stmt for stmt in statements)
+        query_template = Template(
+            """
         WITH i, item
         CALL (i, item) {
             $attach_relationships_statement
         }
-        """,
-    )
+            """,
+        )
     return query_template.safe_substitute(
         attach_relationships_statement=attach_relationships_statement,
     )
@@ -1115,11 +1160,13 @@ def build_ingestion_query(
         - The query sets `firstseen` attributes on all created nodes and relationships
         - The query is intended for use with cartography.core.client.tx.load_graph_data()
     """
+    # Memgraph does not support timestamp(); use a parameter passed from Python instead
+    firstseen_expr = "$FirstSeenTimestamp" if is_memgraph() else "timestamp()"
     query_template = Template(
-        """
+        f"""
         UNWIND $DictList AS item
-            MERGE (i:$node_label{id: $dict_id_field})
-            ON CREATE SET i.firstseen = timestamp()
+            MERGE (i:$node_label{{id: $dict_id_field}})
+            ON CREATE SET i.firstseen = {firstseen_expr}
             SET
                 i._module_name = "$module_name",
                 i._module_version = "$module_version",
@@ -1358,9 +1405,14 @@ def build_create_index_queries(node_schema: CartographyNodeSchema) -> list[str]:
         on all node types, plus any properties marked with extra_index=True.
         It also indexes target node properties from all relationships.
     """
-    index_template = Template(
-        "CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute);",
-    )
+    if is_memgraph():
+        index_template = Template(
+            "CREATE INDEX ON :$TargetNodeLabel($TargetAttribute);",
+        )
+    else:
+        index_template = Template(
+            "CREATE INDEX IF NOT EXISTS FOR (n:$TargetNodeLabel) ON (n.$TargetAttribute);",
+        )
 
     # First ensure an index exists for the node_schema and all extra labels on the `id` and `lastupdated` fields
     result = [
@@ -1517,9 +1569,14 @@ def build_create_index_queries_for_matchlink(
         )
         return []
 
-    index_template = Template(
-        "CREATE INDEX IF NOT EXISTS FOR (n:$NodeLabel) ON (n.$NodeAttribute);",
-    )
+    if is_memgraph():
+        index_template = Template(
+            "CREATE INDEX ON :$NodeLabel($NodeAttribute);",
+        )
+    else:
+        index_template = Template(
+            "CREATE INDEX IF NOT EXISTS FOR (n:$NodeLabel) ON (n.$NodeAttribute);",
+        )
 
     result = []
     for source_key in asdict(rel_schema.source_node_matcher).keys():
@@ -1537,29 +1594,31 @@ def build_create_index_queries_for_matchlink(
             ),
         )
 
-    # Create a composite relationship index that matches the cleanup predicate shape.
+    # Memgraph does not support composite relationship indexes, so skip for Memgraph.
+    # For Neo4j, create a composite relationship index that matches the cleanup predicate shape.
     # Matchlink cleanup filters by sub-resource equality first and then uses lastupdated
     # as a trailing inequality, so that order avoids broad scans under parallel sync load.
-    rel_index_template = Template(
-        "CREATE INDEX IF NOT EXISTS FOR ()$rel_direction[r:$RelLabel]$rel_direction_end() "
-        "ON (r._sub_resource_label, r._sub_resource_id, r.lastupdated);",
-    )
-    if rel_schema.direction == LinkDirection.INWARD:
-        result.append(
-            rel_index_template.safe_substitute(
-                RelLabel=rel_schema.rel_label,
-                rel_direction="<-",
-                rel_direction_end="-",
-            )
+    if not is_memgraph():
+        rel_index_template = Template(
+            "CREATE INDEX IF NOT EXISTS FOR ()$rel_direction[r:$RelLabel]$rel_direction_end() "
+            "ON (r._sub_resource_label, r._sub_resource_id, r.lastupdated);",
         )
-    else:
-        result.append(
-            rel_index_template.safe_substitute(
-                RelLabel=rel_schema.rel_label,
-                rel_direction="-",
-                rel_direction_end="->",
+        if rel_schema.direction == LinkDirection.INWARD:
+            result.append(
+                rel_index_template.safe_substitute(
+                    RelLabel=rel_schema.rel_label,
+                    rel_direction="<-",
+                    rel_direction_end="-",
+                )
             )
-        )
+        else:
+            result.append(
+                rel_index_template.safe_substitute(
+                    RelLabel=rel_schema.rel_label,
+                    rel_direction="-",
+                    rel_direction_end="->",
+                )
+            )
     return result
 
 
@@ -1630,13 +1689,14 @@ def build_matchlink_query(rel_schema: CartographyRelSchema) -> str:
             "Please include `_sub_resource_id: PropertyRef = PropertyRef('_sub_resource_id', set_in_kwargs=True)`"
         )
 
+    firstseen_expr = "$FirstSeenTimestamp" if is_memgraph() else "timestamp()"
     matchlink_query_template = Template(
-        """
+        f"""
         UNWIND $DictList as item
             $source_match
             $target_match
             MERGE $rel
-            ON CREATE SET r.firstseen = timestamp()
+            ON CREATE SET r.firstseen = {firstseen_expr}
             SET
                 r._module_name = "$module_name",
                 r._module_version = "$module_version",

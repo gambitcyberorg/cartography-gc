@@ -6,6 +6,10 @@ class Config:
     contain valid values. Fields documented as optional may contain None, in which case cartography will choose a
     sensible default value for that piece of configuration.
 
+    :type graph_backend: string
+    :param graph_backend: The graph database backend to use. Either "neo4j" (default) or "memgraph".
+        When set to "memgraph", cartography generates Memgraph-compatible Cypher queries and skips
+        Neo4j-specific driver options. Optional.
     :type neo4j_uri: string
     :param neo4j_uri: URI for a Neo4j graph database service. Required.
     :type neo4j_user: string
@@ -292,6 +296,7 @@ class Config:
     def __init__(
         self,
         neo4j_uri,
+        graph_backend="neo4j",
         neo4j_user=None,
         neo4j_password=None,
         neo4j_max_connection_lifetime=None,
@@ -437,6 +442,7 @@ class Config:
         neo4j_max_connection_pool_size=None,
         neo4j_connection_acquisition_timeout=None,
     ):
+        self.graph_backend = graph_backend
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
         self.neo4j_password = neo4j_password

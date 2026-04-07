@@ -56,6 +56,27 @@ services:
       # Point to the neo4j service defined in this docker-compose file.
       - NEO4J_URL=bolt://cartography-neo4j-1:7687
 
+# Memgraph graph database backend (alternative to Neo4j).
+# Start with: docker compose --profile memgraph up -d memgraph
+  memgraph:
+    image: memgraph/memgraph-platform:latest
+    restart: unless-stopped
+    profiles:
+      - memgraph
+    ports:
+      - 7687:7687
+      - 3000:3000   # Memgraph Lab UI
+      - 7444:7444   # Monitoring
+    volumes:
+      - ./.compose/memgraph/data:/var/lib/memgraph
+    environment:
+      - MEMGRAPH="--log-level=WARNING"
+    healthcheck:
+      test: ["CMD", "echo", ">", "/dev/tcp/localhost/7687"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
 # Intended to run local automated tests, custom sync scripts, and local changes.
   cartography-dev:
     # See dev instructions: we assume that you have built this with

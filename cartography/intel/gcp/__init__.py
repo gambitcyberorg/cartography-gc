@@ -734,66 +734,34 @@ def start_gcp_ingestion(
     #
     # This ensures children are cleaned up before their parents.
 
-    orgs = sync_gcp_organizations(
-        neo4j_session,
-        config.update_tag,
-        common_job_parameters,
-        credentials=credentials,
-    )
-
-    # Track org cleanup jobs to run at the very end
-    org_cleanup_jobs = []
-
-    # For each org, sync its folders and projects (as sub-resources), then ingest per-project services
-    for org in orgs:
-        org_resource_name = org.get("name", "")  # e.g., organizations/123456789012
-        if not org_resource_name or "/" not in org_resource_name:
-            logger.error(f"Invalid org resource name: {org_resource_name}")
-            continue
-
-        # Store the full resource name for cleanup operations
-        common_job_parameters["ORG_RESOURCE_NAME"] = org_resource_name
-
-        # Sync folders under org
-        folders = sync_gcp_folders(
+    # If a specific project ID is provided, bypass org/folder discovery entirely.
+    # This is useful when the user lacks org-level permissions.
+    if config.gcp_project_id:
+        logger.info(
+            "Direct project mode: syncing GCP project '%s' (skipping org/folder discovery).",
+            config.gcp_project_id,
+        )
+        from cartography.client.core.tx import load, run_write_query
+        # Create a placeholder organization node and the project node in the graph.
+        # This allows the standard sub_resource_relationship (project -> org) to resolve.
+        org_placeholder = f"organizations/direct-{config.gcp_project_id}"
+        common_job_parameters["ORG_RESOURCE_NAME"] = org_placeholder
+        run_write_query(
             neo4j_session,
-            config.update_tag,
-            common_job_parameters,
-            org_resource_name,
-            credentials=credentials,
+            "MERGE (o:GCPOrganization {id: $org_id}) SET o.lastupdated = $update_tag",
+            org_id=org_placeholder,
+            update_tag=config.update_tag,
+        )
+        projects = [{"projectId": config.gcp_project_id, "id": config.gcp_project_id}]
+        load(
+            neo4j_session,
+            GCPProjectSchema(),
+            projects,
+            lastupdated=config.update_tag,
+            ORG_RESOURCE_NAME=org_placeholder,
         )
 
-        # Sync projects under org and each folder
-        projects = sync_gcp_projects(
-            neo4j_session,
-            org_resource_name,
-            folders,
-            config.update_tag,
-            common_job_parameters,
-            credentials=credentials,
-        )
-
-        # Sync organization-level IAM (predefined roles + custom org roles) ONCE per org.
-        # This is done before project resources so that roles exist when policy bindings are created.
-        # Gate behind iam or policy_bindings since these are the only modules that need role nodes.
-        if (
-            requested_syncs is None
-            or "iam" in requested_syncs
-            or "policy_bindings" in requested_syncs
-        ):
-            logger.info(
-                f"Syncing organization-level IAM for {org_resource_name}",
-            )
-            iam_client = build_client("iam", "v1", credentials=credentials)
-            iam.sync_org_iam(
-                neo4j_session,
-                iam_client,
-                org_resource_name,
-                config.update_tag,
-                common_job_parameters,
-            )
-
-        # Ingest per-project resources (these run their own cleanup immediately since they're leaf nodes)
+        # Sync project resources
         _sync_project_resources(
             neo4j_session,
             projects,
@@ -802,46 +770,116 @@ def start_gcp_ingestion(
             credentials=credentials,
             requested_syncs=requested_syncs,
         )
+    else:
+        # Standard flow: discover orgs, folders, projects via Resource Manager API
+        orgs = sync_gcp_organizations(
+            neo4j_session,
+            config.update_tag,
+            common_job_parameters,
+            credentials=credentials,
+        )
 
-        # Clean up org-level roles for this org (after all project resources have been synced)
-        if (
-            requested_syncs is None
-            or "iam" in requested_syncs
-            or "policy_bindings" in requested_syncs
-        ):
-            logger.debug(
-                f"Running cleanup for org-level IAM roles in {org_resource_name}"
+        # Track org cleanup jobs to run at the very end
+        org_cleanup_jobs = []
+
+        # For each org, sync its folders and projects (as sub-resources), then ingest per-project services
+        for org in orgs:
+            org_resource_name = org.get("name", "")  # e.g., organizations/123456789012
+            if not org_resource_name or "/" not in org_resource_name:
+                logger.error(f"Invalid org resource name: {org_resource_name}")
+                continue
+
+            # Store the full resource name for cleanup operations
+            common_job_parameters["ORG_RESOURCE_NAME"] = org_resource_name
+
+            # Sync folders under org
+            folders = sync_gcp_folders(
+                neo4j_session,
+                config.update_tag,
+                common_job_parameters,
+                org_resource_name,
+                credentials=credentials,
             )
-            iam.cleanup_org_roles(neo4j_session, common_job_parameters)
 
-        # Clean up projects and folders for this org (children before parents).
-        # Use cascade_delete=True to also delete orphaned child resources when a
-        # project/folder is deleted. This handles the case where a project was deleted
-        # between syncs - its resources would otherwise remain as orphans since resource
-        # cleanup is scoped to PROJECT_ID and we only sync existing projects.
-        logger.debug(f"Running cleanup for projects and folders in {org_resource_name}")
-        GraphJob.from_node_schema(
-            GCPProjectSchema(), common_job_parameters, cascade_delete=True
-        ).run(neo4j_session)
-        GraphJob.from_node_schema(
-            GCPFolderSchema(), common_job_parameters, cascade_delete=True
-        ).run(neo4j_session)
+            # Sync projects under org and each folder
+            projects = sync_gcp_projects(
+                neo4j_session,
+                org_resource_name,
+                folders,
+                config.update_tag,
+                common_job_parameters,
+                credentials=credentials,
+            )
 
-        # Save org cleanup job for later (with cascade_delete for defense in depth)
-        org_cleanup_jobs.append(
-            (GCPOrganizationSchema, dict(common_job_parameters), True)
-        )
+            # Sync organization-level IAM (predefined roles + custom org roles) ONCE per org.
+            # This is done before project resources so that roles exist when policy bindings are created.
+            # Gate behind iam or policy_bindings since these are the only modules that need role nodes.
+            if (
+                requested_syncs is None
+                or "iam" in requested_syncs
+                or "policy_bindings" in requested_syncs
+            ):
+                logger.info(
+                    f"Syncing organization-level IAM for {org_resource_name}",
+                )
+                iam_client = build_client("iam", "v1", credentials=credentials)
+                iam.sync_org_iam(
+                    neo4j_session,
+                    iam_client,
+                    org_resource_name,
+                    config.update_tag,
+                    common_job_parameters,
+                )
 
-        # Remove org ID from common job parameters after processing
-        del common_job_parameters["ORG_RESOURCE_NAME"]
+            # Ingest per-project resources (these run their own cleanup immediately since they're leaf nodes)
+            _sync_project_resources(
+                neo4j_session,
+                projects,
+                config.update_tag,
+                common_job_parameters,
+                credentials=credentials,
+                requested_syncs=requested_syncs,
+            )
 
-    # Run all org cleanup jobs at the very end, after all children have been cleaned up
-    # Use cascade_delete=True to clean up any remaining org children
-    logger.info("Running cleanup for GCP organizations")
-    for schema_class, params, cascade in org_cleanup_jobs:
-        GraphJob.from_node_schema(schema_class(), params, cascade_delete=cascade).run(
-            neo4j_session
-        )
+            # Clean up org-level roles for this org (after all project resources have been synced)
+            if (
+                requested_syncs is None
+                or "iam" in requested_syncs
+                or "policy_bindings" in requested_syncs
+            ):
+                logger.debug(
+                    f"Running cleanup for org-level IAM roles in {org_resource_name}"
+                )
+                iam.cleanup_org_roles(neo4j_session, common_job_parameters)
+
+            # Clean up projects and folders for this org (children before parents).
+            # Use cascade_delete=True to also delete orphaned child resources when a
+            # project/folder is deleted. This handles the case where a project was deleted
+            # between syncs - its resources would otherwise remain as orphans since resource
+            # cleanup is scoped to PROJECT_ID and we only sync existing projects.
+            logger.debug(f"Running cleanup for projects and folders in {org_resource_name}")
+            GraphJob.from_node_schema(
+                GCPProjectSchema(), common_job_parameters, cascade_delete=True
+            ).run(neo4j_session)
+            GraphJob.from_node_schema(
+                GCPFolderSchema(), common_job_parameters, cascade_delete=True
+            ).run(neo4j_session)
+
+            # Save org cleanup job for later (with cascade_delete for defense in depth)
+            org_cleanup_jobs.append(
+                (GCPOrganizationSchema, dict(common_job_parameters), True)
+            )
+
+            # Remove org ID from common job parameters after processing
+            del common_job_parameters["ORG_RESOURCE_NAME"]
+
+        # Run all org cleanup jobs at the very end, after all children have been cleaned up
+        # Use cascade_delete=True to clean up any remaining org children
+        logger.info("Running cleanup for GCP organizations")
+        for schema_class, params, cascade in org_cleanup_jobs:
+            GraphJob.from_node_schema(schema_class(), params, cascade_delete=cascade).run(
+                neo4j_session
+            )
 
     if requested_syncs is None or "compute" in requested_syncs:
         run_analysis_job(

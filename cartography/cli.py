@@ -624,6 +624,18 @@ class CLI:
             # =================================================================
             # GCP Options
             # =================================================================
+            gcp_project_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--gcp-project-id",
+                    help=(
+                        "A single GCP project ID to sync directly, bypassing organization and folder "
+                        "discovery. Useful when the authenticated user lacks org-level permissions."
+                    ),
+                    rich_help_panel=PANEL_GCP,
+                    hidden=PANEL_GCP not in visible_panels,
+                ),
+            ] = None,
             gcp_requested_syncs: Annotated[
                 str | None,
                 typer.Option(
@@ -2315,6 +2327,7 @@ class CLI:
                 digitalocean_token=digitalocean_token,
                 permission_relationships_file=permission_relationships_file,
                 azure_permission_relationships_file=azure_permission_relationships_file,
+                gcp_project_id=gcp_project_id,
                 gcp_requested_syncs=gcp_requested_syncs,
                 gcp_permission_relationships_file=gcp_permission_relationships_file,
                 jamf_base_uri=jamf_base_uri,

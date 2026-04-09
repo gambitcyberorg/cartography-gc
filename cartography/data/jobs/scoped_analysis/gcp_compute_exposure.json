@@ -37,7 +37,7 @@
     },
     {
       "__comment__": "Connect GCP ingress firewall rules that have no target tags and no target service accounts to all instances in the same VPC",
-      "query": "MATCH (fw:GCPFirewall{direction: 'INGRESS', has_target_service_accounts: False}) WHERE NOT (fw)-[:TARGET_TAG]->(:GCPNetworkTag) MATCH (p:GCPProject{id: $PROJECT_ID})-[:RESOURCE]->(vpc:GCPVpc)-[res:RESOURCE]->(fw) MATCH (inst:GCPInstance)-[mem:MEMBER_OF_GCP_VPC]->(vpc) MERGE (fw)-[a:FIREWALL_INGRESS]->(inst) ON CREATE SET a.firstseen = timestamp() SET a.lastupdated = $UPDATE_TAG",
+      "query": "MATCH (fw:GCPFirewall{direction: 'INGRESS', has_target_service_accounts: False}) WHERE NOT EXISTS ((fw)-[:TARGET_TAG]->(:GCPNetworkTag)) MATCH (p:GCPProject{id: $PROJECT_ID})-[:RESOURCE]->(vpc:GCPVpc)-[res:RESOURCE]->(fw) MATCH (inst:GCPInstance)-[mem:MEMBER_OF_GCP_VPC]->(vpc) MERGE (fw)-[a:FIREWALL_INGRESS]->(inst) ON CREATE SET a.firstseen = timestamp() SET a.lastupdated = $UPDATE_TAG",
       "iterative": false
     },
     {

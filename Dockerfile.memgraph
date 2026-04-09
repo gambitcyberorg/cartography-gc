@@ -1,0 +1,37 @@
+# Cartography with Memgraph support
+# Build: docker build -t cartography-memgraph -f Dockerfile.memgraph .
+# Run:   docker run --rm cartography-memgraph --graph-backend memgraph --neo4j-uri bolt://host.docker.internal:7687 --selected-modules aws -v
+
+FROM python:3.13-slim AS base
+ARG uid=10001
+ARG gid=10001
+WORKDIR /var/cartography
+ENV HOME=/var/cartography
+
+
+# Builder stage - install dependencies and the patched source
+FROM base AS builder
+COPY --from=ghcr.io/astral-sh/uv@sha256:87a04222b228501907f487b338ca6fc1514a93369bfce6930eb06c8d576e58a4 /uv /uvx /bin/
+
+# Copy the full source tree (includes Memgraph compatibility patches)
+COPY . /var/cartography/src
+
+# Install from local source
+RUN uv tool install /var/cartography/src
+
+
+# Production image
+FROM base AS production
+ARG uid=10001
+ARG gid=10001
+
+COPY --from=builder --chown=${uid}:${gid} /var/cartography/.local /var/cartography/.local
+ENV PATH="/var/cartography/.local/bin:$PATH"
+
+USER ${uid}:${gid}
+
+# Verify the binary works
+RUN cartography -h > /dev/null 2>&1
+
+ENTRYPOINT ["cartography"]
+CMD ["--graph-backend", "memgraph", "-h"]

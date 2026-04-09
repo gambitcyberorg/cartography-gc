@@ -22,7 +22,7 @@
     },
     {
         "__comment__": "Assign assumed scopes to users for orphan scopes (scopes not granted by any role)",
-        "query": "MATCH (s:KeycloakScope)<-[:RESOURCE]-(r:KeycloakRealm) MATCH (u:KeycloakUser)<-[:RESOURCE]-(r) WHERE NOT (s)<-[:GRANTS|INDIRECT_GRANTS]-(:KeycloakRole) MERGE (u)-[r0:ASSUME_SCOPE]->(s) SET r0.firstseen = $UPDATE_TAG SET r0.lastupdated = $UPDATE_TAG",
+        "query": "MATCH (s:KeycloakScope)<-[:RESOURCE]-(r:KeycloakRealm) MATCH (u:KeycloakUser)<-[:RESOURCE]-(r) WHERE NOT EXISTS ((s)<-[:GRANTS|INDIRECT_GRANTS]-(:KeycloakRole)) MERGE (u)-[r0:ASSUME_SCOPE]->(s) SET r0.firstseen = $UPDATE_TAG SET r0.lastupdated = $UPDATE_TAG",
         "iterative": false
     }
   ],

@@ -36,7 +36,7 @@
     },
     {
       "__comment": "Mark container instances as directly exposed if they have a public IP and are not VNet-integrated. Prefer ip_address_type when present, fall back to topology.",
-      "query": "MATCH (c:AzureContainerInstance) WHERE c.ip_address IS NOT NULL AND (c.ip_address_type = 'Public' OR (c.ip_address_type IS NULL AND NOT (c)-[:ATTACHED_TO]->(:AzureSubnet))) SET c.exposed_internet = true, c.exposed_internet_type = ['direct']",
+      "query": "MATCH (c:AzureContainerInstance) WHERE c.ip_address IS NOT NULL AND (c.ip_address_type = 'Public' OR (c.ip_address_type IS NULL AND NOT EXISTS ((c)-[:ATTACHED_TO]->(:AzureSubnet)))) SET c.exposed_internet = true, c.exposed_internet_type = ['direct']",
       "iterative": false
     },
     {

@@ -1,6 +1,9 @@
 build/
 *.egg-info/
 venv/
+.venv/
 .compose
 .cache
 .local
+__pycache__/
+*.pyc

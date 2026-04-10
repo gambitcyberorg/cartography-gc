@@ -4,6 +4,7 @@ from typing import List
 
 import neo4j
 
+from cartography.client.core.tx import _run_index_query_with_retry
 from cartography.client.core.tx import run_write_query
 from cartography.config import Config
 from cartography.graph.backend import is_memgraph
@@ -54,4 +55,7 @@ def run(neo4j_session: neo4j.Session, config: Config) -> None:
                 continue
             statement = converted
         logger.debug("Executing statement: %s", statement)
-        run_write_query(neo4j_session, statement)
+        if is_memgraph():
+            _run_index_query_with_retry(neo4j_session, statement)
+        else:
+            run_write_query(neo4j_session, statement)

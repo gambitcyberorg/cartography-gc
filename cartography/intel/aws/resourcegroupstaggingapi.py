@@ -457,7 +457,10 @@ def cleanup(neo4j_session: neo4j.Session, common_job_parameters: Dict) -> None:
         neo4j_session,
         """
         MATCH (n:AWSTag)
-        WHERE NOT (n)--() AND n.lastupdated <> $UPDATE_TAG
+        WHERE n.lastupdated <> $UPDATE_TAG
+        OPTIONAL MATCH (n)-[r]-()
+        WITH n, r
+        WHERE r IS NULL
         WITH n LIMIT $LIMIT_SIZE
         DETACH DELETE n
         """,

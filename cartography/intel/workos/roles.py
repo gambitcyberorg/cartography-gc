@@ -3,7 +3,11 @@ from typing import Any
 
 import neo4j
 from workos import WorkOSClient
-from workos.types.roles.role import Role
+
+try:
+    from workos.types.roles.role import Role
+except ImportError:
+    from typing import Any as Role  # type: ignore[assignment]
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob

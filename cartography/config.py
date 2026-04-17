@@ -294,6 +294,14 @@ class Config:
     :param jumpcloud_api_key: JumpCloud API key for authentication. Optional.
     :type jumpcloud_org_id: str
     :param jumpcloud_org_id: JumpCloud organization ID used as the tenant identifier. Optional.
+    :type es_cluster_nodes: str
+    :param es_cluster_nodes: Elasticsearch cluster node address, e.g. "localhost:9200". Optional.
+    :type es_username: str
+    :param es_username: Username for Elasticsearch basic auth. Optional.
+    :type es_password: str
+    :param es_password: Password for Elasticsearch basic auth. Optional.
+    :type es_document_id: str
+    :param es_document_id: Document ID in the asset-sync-info Elasticsearch index to update on sync start. Optional.
     """
 
     def __init__(
@@ -445,6 +453,10 @@ class Config:
         neo4j_max_transaction_retry_time=None,
         neo4j_max_connection_pool_size=None,
         neo4j_connection_acquisition_timeout=None,
+        es_cluster_nodes=None,
+        es_username=None,
+        es_password=None,
+        es_document_id=None,
     ):
         self.graph_backend = graph_backend
         self.neo4j_uri = neo4j_uri
@@ -595,3 +607,7 @@ class Config:
         self.ubuntu_security_api_url = ubuntu_security_api_url
         self.jumpcloud_api_key = jumpcloud_api_key
         self.jumpcloud_org_id = jumpcloud_org_id
+        self.es_cluster_nodes = es_cluster_nodes
+        self.es_username = es_username
+        self.es_password = es_password
+        self.es_document_id = es_document_id

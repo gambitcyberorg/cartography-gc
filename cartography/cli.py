@@ -67,6 +67,7 @@ PANEL_SUBIMAGE = "SubImage Options"
 PANEL_SPACELIFT = "Spacelift Options"
 PANEL_WORKOS = "WorkOS Options"
 PANEL_JUMPCLOUD = "JumpCloud Options"
+PANEL_ELASTICSEARCH = "Elasticsearch Options"
 PANEL_STATSD = "StatsD Metrics"
 PANEL_ANALYSIS = "Analysis Options"
 
@@ -119,7 +120,7 @@ MODULE_PANELS = {
 }
 
 # Panels that should always be shown (not module-specific)
-ALWAYS_SHOW_PANELS = {PANEL_CORE, PANEL_GRAPH_DB, PANEL_NEO4J, PANEL_STATSD, PANEL_ANALYSIS}
+ALWAYS_SHOW_PANELS = {PANEL_CORE, PANEL_GRAPH_DB, PANEL_NEO4J, PANEL_ELASTICSEARCH, PANEL_STATSD, PANEL_ANALYSIS}
 
 
 def _version_callback(value: bool) -> None:
@@ -1729,6 +1730,41 @@ class CLI:
                 ),
             ] = None,
             # =================================================================
+            # Elasticsearch Options
+            # =================================================================
+            es_cluster_nodes: Annotated[
+                str | None,
+                typer.Option(
+                    "--es-cluster-nodes",
+                    help="Elasticsearch cluster node address, e.g. 'localhost:9200'.",
+                    rich_help_panel=PANEL_ELASTICSEARCH,
+                ),
+            ] = None,
+            es_username: Annotated[
+                str | None,
+                typer.Option(
+                    "--es-username",
+                    help="Username for Elasticsearch basic auth.",
+                    rich_help_panel=PANEL_ELASTICSEARCH,
+                ),
+            ] = None,
+            es_password_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--es-password-env-var",
+                    help="Environment variable name containing the Elasticsearch password.",
+                    rich_help_panel=PANEL_ELASTICSEARCH,
+                ),
+            ] = None,
+            es_document_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--es-document-id",
+                    help="Document ID in the asset-sync-info index to update with sync status.",
+                    rich_help_panel=PANEL_ELASTICSEARCH,
+                ),
+            ] = None,
+            # =================================================================
             # StatsD Metrics Options
             # =================================================================
             statsd_enabled: Annotated[
@@ -2288,6 +2324,15 @@ class CLI:
                 )
                 workos_api_key = os.environ.get(workos_apikey_env_var)
 
+            # Read Elasticsearch password
+            es_password = None
+            if es_password_env_var:
+                logger.debug(
+                    "Reading Elasticsearch password from environment variable %s",
+                    es_password_env_var,
+                )
+                es_password = os.environ.get(es_password_env_var)
+
             # Build the Config object
             config = Config(
                 neo4j_uri=neo4j_uri,
@@ -2432,6 +2477,10 @@ class CLI:
                 workos_client_id=workos_client_id,
                 ubuntu_security_enabled=ubuntu_security_enabled,
                 ubuntu_security_api_url=ubuntu_security_api_url,
+                es_cluster_nodes=es_cluster_nodes,
+                es_username=es_username,
+                es_password=es_password,
+                es_document_id=es_document_id,
             )
 
             # Run the sync

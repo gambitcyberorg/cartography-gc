@@ -26,6 +26,8 @@ ARG uid=10001
 ARG gid=10001
 
 COPY --from=builder --chown=${uid}:${gid} /var/cartography/.local /var/cartography/.local
+COPY --chown=${uid}:${gid} fullchain.pem /app/truststore/fullchain.pem
+COPY --chown=${uid}:${gid} entrypoint.sh /var/cartography/entrypoint.sh
 ENV PATH="/var/cartography/.local/bin:$PATH"
 
 USER ${uid}:${gid}
@@ -33,5 +35,4 @@ USER ${uid}:${gid}
 # Verify the binary works
 RUN cartography -h > /dev/null 2>&1
 
-ENTRYPOINT ["cartography"]
-CMD ["--graph-backend", "memgraph", "-h"]
+ENTRYPOINT ["/var/cartography/entrypoint.sh"]

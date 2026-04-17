@@ -57,6 +57,7 @@ import cartography.intel.ubuntu
 import cartography.intel.workday
 import cartography.intel.workos
 from cartography.config import Config
+from cartography.es_client import update_asset_sync_status
 from cartography.stats import set_stats_client
 from cartography.util import STATUS_FAILURE
 from cartography.util import STATUS_SUCCESS
@@ -474,7 +475,30 @@ def run_with_config(sync: Sync, config: Config) -> int:
     default_update_tag = int(time.time())
     if not config.update_tag:
         config.update_tag = default_update_tag
-    return sync.run(neo4j_driver, config)
+
+    # Update Elasticsearch asset-sync-info document status to Running
+    if config.es_cluster_nodes and config.es_document_id:
+        update_asset_sync_status(
+            es_uri=config.es_cluster_nodes,
+            document_id=config.es_document_id,
+            status="Running",
+            es_username=config.es_username,
+            es_password=config.es_password,
+        )
+
+    result = sync.run(neo4j_driver, config)
+
+    # Update Elasticsearch asset-sync-info document status to Completed
+    if config.es_cluster_nodes and config.es_document_id:
+        update_asset_sync_status(
+            es_uri=config.es_cluster_nodes,
+            document_id=config.es_document_id,
+            status="Completed",
+            es_username=config.es_username,
+            es_password=config.es_password,
+        )
+
+    return result
 
 
 def build_default_sync() -> Sync:

@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cartography-sync
+  namespace: cartography
+  labels:
+    app: cartography
+spec:
+  # Run every 6 hours
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200  # 2 hour timeout
+      template:
+        metadata:
+          labels:
+            app: cartography
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cartography
+              image: gambitcyber/cartography-gc:1.0.1
+              imagePullPolicy: Always
+              args:
+                - "--aws-access-key-id"
+                - "REPLACE_ME"
+                - "--aws-secret-access-key"
+                - "REPLACE_ME"
+                - "--aws-default-region"
+                - "eu-north-1"
+                - "--graph-backend"
+                - "memgraph"
+                - "--neo4j-uri"
+                - "bolt://memgraph.cartography.svc.cluster.local:7687"
+                - "--selected-modules"
+                - "aws"
+                - "--aws-regions"
+                - "eu-north-1"
+                - "--es-cluster-nodes"
+                - "localhost:9200"
+                - "--es-username"
+                - "elastic"
+                - "--es-password"
+                - "REPLACE_ME"
+                - "--es-document-id"
+                - "REPLACE_ME"
+                - "-v"
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1"

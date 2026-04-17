@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cartography-config
+  namespace: cartography
+data:
+  AWS_DEFAULT_REGION: "eu-north-1"
+  GRAPH_BACKEND: "memgraph"
+  NEO4J_URI: "bolt://memgraph.cartography.svc.cluster.local:7687"
+  SELECTED_MODULES: "aws"
+  AWS_REGIONS: "eu-north-1"
+  ES_CLUSTER_NODES: "localhost:9200"
+  ES_USERNAME: "elastic"
+  ES_DOCUMENT_ID: "REPLACE_ME"

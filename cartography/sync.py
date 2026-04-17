@@ -486,7 +486,18 @@ def run_with_config(sync: Sync, config: Config) -> int:
             es_password=config.es_password,
         )
 
-    result = sync.run(neo4j_driver, config)
+    try:
+        result = sync.run(neo4j_driver, config)
+    except Exception:
+        if config.es_cluster_nodes and config.es_document_id:
+            update_asset_sync_status(
+                es_uri=config.es_cluster_nodes,
+                document_id=config.es_document_id,
+                status="Failed",
+                es_username=config.es_username,
+                es_password=config.es_password,
+            )
+        raise
 
     # Update Elasticsearch asset-sync-info document status to Completed
     if config.es_cluster_nodes and config.es_document_id:

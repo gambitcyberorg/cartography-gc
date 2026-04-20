@@ -2,12 +2,27 @@ import logging
 import os
 from datetime import datetime
 from datetime import timezone
+from typing import Any
+from typing import Dict
+from typing import List
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 ES_TRUST_STORE_PATH = "/app/truststore/fullchain.pem"
+
+
+def _es_verify() -> bool | str:
+    if os.path.exists(ES_TRUST_STORE_PATH):
+        return ES_TRUST_STORE_PATH
+    return True
+
+
+def _iso_now_millis() -> str:
+    now = datetime.now(timezone.utc)
+    now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
+    return now.isoformat(timespec="milliseconds")
 
 
 def update_asset_sync_status(
@@ -33,16 +48,10 @@ def update_asset_sync_status(
     if es_username and es_password:
         auth = (es_username, es_password)
 
-    verify: bool | str = True
-    if os.path.exists(ES_TRUST_STORE_PATH):
-        verify = ES_TRUST_STORE_PATH
-
-    now = datetime.now(timezone.utc)
-    now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
     payload = {
         "doc": {
             "status": status,
-            "updated_at": now.isoformat(timespec="milliseconds"),
+            "updated_at": _iso_now_millis(),
         },
     }
 
@@ -51,7 +60,7 @@ def update_asset_sync_status(
             url,
             json=payload,
             auth=auth,
-            verify=verify,
+            verify=_es_verify(),
             timeout=30,
         )
         response.raise_for_status()
@@ -63,6 +72,69 @@ def update_asset_sync_status(
     except requests.exceptions.RequestException as e:
         logger.warning(
             "Failed to update asset-sync-info document '%s' in Elasticsearch: %s",
+            document_id,
+            e,
+        )
+
+
+def update_findings_document(
+    es_uri: str,
+    document_id: str,
+    findings: List[Dict[str, Any]],
+    normalized: List[Dict[str, Any]],
+    stats: Dict[str, Any],
+    target: str,
+    finding_type: str,
+    es_username: str | None = None,
+    es_password: str | None = None,
+) -> None:
+    """
+    Merge the findings API response + normalized records + stats into the
+    existing asset-sync-info document keyed by `document_id`. The payload is
+    namespaced under `findings_data` so prior fields on the document are
+    preserved.
+    """
+    url = f"https://{es_uri}/asset-sync-info/_update/{document_id}"
+
+    auth = None
+    if es_username and es_password:
+        auth = (es_username, es_password)
+
+    payload = {
+        "doc": {
+            "findings_data": {
+                "target": target,
+                "type": finding_type,
+                "updated_at": _iso_now_millis(),
+                "stats": stats,
+                "count": len(findings),
+                "normalized_count": len(normalized),
+                "findings": findings,
+                "normalized": normalized,
+            },
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            auth=auth,
+            verify=_es_verify(),
+            timeout=60,
+        )
+        response.raise_for_status()
+        logger.info(
+            "Successfully updated asset-sync-info document '%s' with %d findings "
+            "(target=%s, type=%s).",
+            document_id,
+            len(findings),
+            target,
+            finding_type,
+        )
+    except requests.exceptions.RequestException as e:
+        logger.warning(
+            "Failed to update asset-sync-info document '%s' with findings: %s",
             document_id,
             e,
         )

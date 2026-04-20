@@ -302,6 +302,10 @@ class Config:
     :param es_password: Password for Elasticsearch basic auth. Optional.
     :type es_document_id: str
     :param es_document_id: Document ID in the asset-sync-info Elasticsearch index to update on sync start. Optional.
+    :type findings_api_url: str
+    :param findings_api_url: Base URL of the attack-surface findings API (e.g. "https://knightguard-api-dev.gambitcyber.org"). Optional.
+    :type findings_api_token: str
+    :param findings_api_token: Bearer token for the findings API. Optional.
     """
 
     def __init__(
@@ -457,6 +461,8 @@ class Config:
         es_username=None,
         es_password=None,
         es_document_id=None,
+        findings_api_url=None,
+        findings_api_token=None,
     ):
         self.graph_backend = graph_backend
         self.neo4j_uri = neo4j_uri
@@ -611,3 +617,5 @@ class Config:
         self.es_username = es_username
         self.es_password = es_password
         self.es_document_id = es_document_id
+        self.findings_api_url = findings_api_url
+        self.findings_api_token = findings_api_token

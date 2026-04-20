@@ -26,6 +26,7 @@ import cartography.intel.digitalocean
 import cartography.intel.docker_scout
 import cartography.intel.duo
 import cartography.intel.entra
+import cartography.intel.findings
 import cartography.intel.gcp
 import cartography.intel.github
 import cartography.intel.gitlab
@@ -110,6 +111,7 @@ TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
         "spacelift": cartography.intel.spacelift.start_spacelift_ingestion,
         "workos": cartography.intel.workos.start_workos_ingestion,
         "subimage": cartography.intel.subimage.start_subimage_ingestion,
+        "findings": cartography.intel.findings.start_findings_ingestion,
         "ontology": cartography.intel.ontology.run,
         # Analysis should be the last stage
         "analysis": cartography.intel.analysis.run,

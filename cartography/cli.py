@@ -68,6 +68,7 @@ PANEL_SPACELIFT = "Spacelift Options"
 PANEL_WORKOS = "WorkOS Options"
 PANEL_JUMPCLOUD = "JumpCloud Options"
 PANEL_ELASTICSEARCH = "Elasticsearch Options"
+PANEL_FINDINGS = "Findings Options"
 PANEL_STATSD = "StatsD Metrics"
 PANEL_ANALYSIS = "Analysis Options"
 
@@ -116,6 +117,7 @@ MODULE_PANELS = {
     "subimage": PANEL_SUBIMAGE,
     "spacelift": PANEL_SPACELIFT,
     "workos": PANEL_WORKOS,
+    "findings": PANEL_FINDINGS,
     "analysis": PANEL_ANALYSIS,
 }
 
@@ -1765,6 +1767,26 @@ class CLI:
                 ),
             ] = None,
             # =================================================================
+            # Findings Options
+            # =================================================================
+            findings_api_url: Annotated[
+                str | None,
+                typer.Option(
+                    "--findings-api-url",
+                    help="Base URL of the attack-surface findings API, e.g. 'https://knightguard-api-dev.gambitcyber.org'.",
+                    envvar="FINDINGS_API_URL",
+                    rich_help_panel=PANEL_FINDINGS,
+                ),
+            ] = None,
+            findings_api_token_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--findings-api-token-env-var",
+                    help="Environment variable name containing the findings API bearer token.",
+                    rich_help_panel=PANEL_FINDINGS,
+                ),
+            ] = None,
+            # =================================================================
             # StatsD Metrics Options
             # =================================================================
             statsd_enabled: Annotated[
@@ -2333,6 +2355,15 @@ class CLI:
                 )
                 es_password = os.environ.get(es_password_env_var)
 
+            # Read findings API tokens
+            findings_api_token = None
+            if findings_api_token_env_var:
+                logger.debug(
+                    "Reading findings API token from environment variable %s",
+                    findings_api_token_env_var,
+                )
+                findings_api_token = os.environ.get(findings_api_token_env_var)
+
             # Build the Config object
             config = Config(
                 neo4j_uri=neo4j_uri,
@@ -2481,6 +2512,8 @@ class CLI:
                 es_username=es_username,
                 es_password=es_password,
                 es_document_id=es_document_id,
+                findings_api_url=findings_api_url,
+                findings_api_token=findings_api_token,
             )
 
             # Run the sync

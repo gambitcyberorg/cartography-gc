@@ -25,6 +25,12 @@ spec:
             - name: cartography
               image: gambitcyber/cartography-gc:1.0.1
               imagePullPolicy: Always
+              env:
+                - name: FINDINGS_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: cartography-secrets
+                      key: FINDINGS_API_TOKEN
               args:
                 - "--aws-access-key-id"
                 - "REPLACE_ME"
@@ -48,6 +54,10 @@ spec:
                 - "REPLACE_ME"
                 - "--es-document-id"
                 - "REPLACE_ME"
+                - "--findings-api-url"
+                - "https://knightguard-api-dev.gambitcyber.org"
+                - "--findings-api-token-env-var"
+                - "FINDINGS_API_TOKEN"
                 - "-v"
               resources:
                 requests:

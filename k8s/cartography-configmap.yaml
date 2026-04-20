@@ -12,3 +12,4 @@ data:
   ES_CLUSTER_NODES: "localhost:9200"
   ES_USERNAME: "elastic"
   ES_DOCUMENT_ID: "REPLACE_ME"
+  FINDINGS_API_URL: "https://knightguard-api-dev.gambitcyber.org"

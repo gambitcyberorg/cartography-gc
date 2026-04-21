@@ -51,8 +51,10 @@ SET r.lastupdated = $UPDATE_TAG
 """
 
 _CLEANUP_STALE_RELS_QUERY = """
-MATCH (:Finding)<-[r:HAS_FINDINGS]-()
+MATCH (f:Finding)<-[r:HAS_FINDINGS]-()
 WHERE r.lastupdated <> $UPDATE_TAG
+  AND f.type = $FINDING_TYPE
+  AND f.target = $TARGET
 DELETE r
 """
 _MAPPING_STATS_QUERY = """
@@ -120,7 +122,7 @@ def _normalize_finding(
         if not resource_arn:
             continue
         row = dict(base)
-        row["id"] = f"{resource_arn}::{event_code}"
+        row["id"] = f"{target}::{finding_type}::{resource_arn}::{event_code}"
         row["resource_arn"] = resource_arn
         row["resource_type"] = resource.get("type")
         row["resource_name"] = resource.get("name")
@@ -221,7 +223,12 @@ def _load(
                 "findings_not_mapped": int(result["findings_not_mapped"] or 0),
             }
     neo4j_session.execute_write(
-        lambda tx: tx.run(_CLEANUP_STALE_RELS_QUERY, UPDATE_TAG=update_tag).consume(),
+        lambda tx: tx.run(
+            _CLEANUP_STALE_RELS_QUERY,
+            UPDATE_TAG=update_tag,
+            FINDING_TYPE=finding_type,
+            TARGET=target,
+        ).consume(),
     )
     neo4j_session.execute_write(
         lambda tx: tx.run(

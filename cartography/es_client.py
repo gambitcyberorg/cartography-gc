@@ -80,8 +80,8 @@ def update_asset_sync_status(
 def update_findings_document(
     es_uri: str,
     document_id: str,
-    findings: List[Dict[str, Any]],
-    normalized: List[Dict[str, Any]],
+    findings_count: int,
+    normalized_count: int,
     stats: Dict[str, Any],
     target: str,
     finding_type: str,
@@ -89,10 +89,9 @@ def update_findings_document(
     es_password: str | None = None,
 ) -> None:
     """
-    Merge the findings API response + normalized records + stats into the
-    existing asset-sync-info document keyed by `document_id`. The payload is
-    namespaced under `findings_data` so prior fields on the document are
-    preserved.
+    Merge findings metadata + stats into the existing asset-sync-info document
+    keyed by `document_id`. The payload is namespaced under `findings_data` so
+    prior fields on the document are preserved.
     """
     url = f"https://{es_uri}/asset-sync-info/_update/{document_id}"
 
@@ -107,10 +106,8 @@ def update_findings_document(
                 "type": finding_type,
                 "updated_at": _iso_now_millis(),
                 "stats": stats,
-                "count": len(findings),
-                "normalized_count": len(normalized),
-                "findings": findings,
-                "normalized": normalized,
+                "count": findings_count,
+                "normalized_count": normalized_count,
             },
         },
     }
@@ -128,7 +125,7 @@ def update_findings_document(
             "Successfully updated asset-sync-info document '%s' with %d findings "
             "(target=%s, type=%s).",
             document_id,
-            len(findings),
+            findings_count,
             target,
             finding_type,
         )

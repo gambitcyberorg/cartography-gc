@@ -45,16 +45,34 @@ _LINK_FINDINGS_QUERY = """
 UNWIND $DictList AS f
 MATCH (asset {id: f.resource_arn})
 MATCH (finding:Finding {id: f.id})
-MERGE (asset)-[r:HAS_FINDING]->(finding)
+MERGE (asset)-[r:HAS_FINDINGS]->(finding)
 ON CREATE SET r.firstseen = $UPDATE_TAG
 SET r.lastupdated = $UPDATE_TAG
 """
 
 _CLEANUP_STALE_RELS_QUERY = """
-MATCH (:Finding)<-[r:HAS_FINDING]-()
+MATCH (:Finding)<-[r:HAS_FINDINGS]-()
 WHERE r.lastupdated <> $UPDATE_TAG
 DELETE r
 """
+_MAPPING_STATS_QUERY = """
+UNWIND $DictList AS f
+WITH collect(DISTINCT f.resource_arn) AS source_asset_ids,
+     collect(DISTINCT f.id) AS normalized_finding_ids
+OPTIONAL MATCH (asset)
+WHERE asset.id IN source_asset_ids
+WITH normalized_finding_ids, collect(DISTINCT asset.id) AS mapped_asset_ids
+UNWIND normalized_finding_ids AS finding_id
+OPTIONAL MATCH (:Finding {id: finding_id})<-[:HAS_FINDINGS]-()
+WITH mapped_asset_ids, normalized_finding_ids, finding_id, count(*) > 0 AS is_mapped
+RETURN
+    size(mapped_asset_ids) AS assets_pushed_to_memgraph,
+    size(normalized_finding_ids) AS total_normalized_findings,
+    count(CASE WHEN is_mapped THEN 1 END) AS findings_mapped,
+    count(CASE WHEN NOT is_mapped THEN 1 END) AS findings_not_mapped
+"""
+
+
 
 _CLEANUP_STALE_FINDINGS_QUERY = """
 MATCH (f:Finding)
@@ -127,8 +145,16 @@ def sync(
         len(records),
         sum(len(p.get("findings") or []) for p in raw_pages),
     )
-    _load(neo4j_session, records, config.update_tag, finding_type, target)
-    _persist_to_es(config, records, raw_pages, stats, target, finding_type)
+    mapping_stats = _load(neo4j_session, records, config.update_tag, finding_type, target)
+    _persist_to_es(
+        config,
+        records,
+        raw_pages,
+        stats,
+        mapping_stats,
+        target,
+        finding_type,
+    )
 
 
 def _collect(
@@ -164,7 +190,13 @@ def _load(
     update_tag: int,
     finding_type: str,
     target: str,
-) -> None:
+) -> Dict[str, int]:
+    mapping_stats: Dict[str, int] = {
+        "assets_pushed_to_memgraph": 0,
+        "findings_mapped": 0,
+        "total_normalized_findings": 0,
+        "findings_not_mapped": 0,
+    }
     if not records:
         logger.info("No finding records to load; running cleanup only.")
     else:
@@ -180,6 +212,14 @@ def _load(
             DictList=records,
             UPDATE_TAG=update_tag,
         )
+        result = neo4j_session.run(_MAPPING_STATS_QUERY, DictList=records).single()
+        if result:
+            mapping_stats = {
+                "assets_pushed_to_memgraph": int(result["assets_pushed_to_memgraph"] or 0),
+                "findings_mapped": int(result["findings_mapped"] or 0),
+                "total_normalized_findings": int(result["total_normalized_findings"] or 0),
+                "findings_not_mapped": int(result["findings_not_mapped"] or 0),
+            }
     neo4j_session.execute_write(
         lambda tx: tx.run(_CLEANUP_STALE_RELS_QUERY, UPDATE_TAG=update_tag).consume(),
     )
@@ -191,6 +231,7 @@ def _load(
             TARGET=target,
         ).consume(),
     )
+    return mapping_stats
 
 
 def _persist_to_es(
@@ -198,6 +239,7 @@ def _persist_to_es(
     records: List[Dict[str, Any]],
     raw_pages: List[Dict[str, Any]],
     stats: Dict[str, Any],
+    mapping_stats: Dict[str, int],
     target: str,
     finding_type: str,
 ) -> None:
@@ -212,12 +254,18 @@ def _persist_to_es(
     for page in raw_pages:
         all_findings.extend(page.get("findings") or [])
 
+    stats_with_mapping = dict(stats)
+    stats_with_mapping["ingestion_metrics"] = {
+        **mapping_stats,
+        "total_findings": len(all_findings),
+    }
+
     update_findings_document(
         es_uri=config.es_cluster_nodes,
         document_id=config.es_document_id,
-        findings=all_findings,
-        normalized=records,
-        stats=stats,
+        findings_count=len(all_findings),
+        normalized_count=len(records),
+        stats=stats_with_mapping,
         target=target,
         finding_type=finding_type,
         es_username=config.es_username,

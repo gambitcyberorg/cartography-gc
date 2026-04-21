@@ -52,6 +52,8 @@ spec:
             - "https://knightguard-api-dev.gambitcyber.org"
             - "--findings-api-token-env-var"
             - "FINDINGS_API_TOKEN"
+            - "--findings-target"
+            - "aws" # set to "azure" for Azure-only findings mapping
             - "-v"
           resources:
             requests:

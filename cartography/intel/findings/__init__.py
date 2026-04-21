@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def start_findings_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     """
     Ingest findings from the attack-surface findings API, create :Finding nodes,
-    link them to assets via (asset)-[:HAS_FINDING]->(:Finding), and persist the
+    link them to assets via (asset)-[:HAS_FINDINGS]->(:Finding), and persist the
     response + stats to the existing asset-sync-info Elasticsearch document.
     """
     if not config.findings_api_url or not config.findings_api_token:
@@ -30,7 +30,19 @@ def start_findings_ingestion(neo4j_session: neo4j.Session, config: Config) -> No
         bearer_token=config.findings_api_token,
     )
 
-    for target in FINDINGS_TARGETS:
+    targets_to_sync = FINDINGS_TARGETS
+    if config.findings_target:
+        requested_target = config.findings_target.strip().lower()
+        if requested_target not in FINDINGS_TARGETS:
+            logger.warning(
+                "Invalid findings target '%s'. Supported values are: %s. Skipping findings sync.",
+                config.findings_target,
+                ", ".join(FINDINGS_TARGETS),
+            )
+            return
+        targets_to_sync = (requested_target,)
+
+    for target in targets_to_sync:
         logger.info("Syncing findings for target=%s", target)
         cartography.intel.findings.misconfig.sync(
             neo4j_session=neo4j_session,

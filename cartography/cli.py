@@ -1786,6 +1786,14 @@ class CLI:
                     rich_help_panel=PANEL_FINDINGS,
                 ),
             ] = None,
+            findings_target: Annotated[
+                str | None,
+                typer.Option(
+                    "--findings-target",
+                    help="Findings target to sync. Use 'aws' or 'azure'. If omitted, both are synced.",
+                    rich_help_panel=PANEL_FINDINGS,
+                ),
+            ] = None,
             # =================================================================
             # StatsD Metrics Options
             # =================================================================
@@ -2514,6 +2522,7 @@ class CLI:
                 es_document_id=es_document_id,
                 findings_api_url=findings_api_url,
                 findings_api_token=findings_api_token,
+                findings_target=findings_target,
             )
 
             # Run the sync

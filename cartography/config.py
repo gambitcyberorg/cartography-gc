@@ -306,6 +306,9 @@ class Config:
     :param findings_api_url: Base URL of the attack-surface findings API (e.g. "https://knightguard-api-dev.gambitcyber.org"). Optional.
     :type findings_api_token: str
     :param findings_api_token: Bearer token for the findings API. Optional.
+    :type findings_target: str
+    :param findings_target: Optional findings target selector. If set, only that
+        target (for example "aws" or "azure") will be synced.
     """
 
     def __init__(
@@ -463,6 +466,7 @@ class Config:
         es_document_id=None,
         findings_api_url=None,
         findings_api_token=None,
+        findings_target=None,
     ):
         self.graph_backend = graph_backend
         self.neo4j_uri = neo4j_uri
@@ -619,3 +623,4 @@ class Config:
         self.es_document_id = es_document_id
         self.findings_api_url = findings_api_url
         self.findings_api_token = findings_api_token
+        self.findings_target = findings_target

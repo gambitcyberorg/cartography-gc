@@ -145,6 +145,7 @@ cartography-rules = "cartography.rules.cli:main"
 "cartography.data.jobs.analysis" = ["*.json"]
 "cartography.data.jobs.scoped_analysis" = ["*.json"]
 "cartography.data.jobs.cleanup" = ["*.json"]
+"cartography.intel.risk_scoring" = ["*.csv"]
 
 [project.urls]
 Homepage = "https://cartography-cncf.github.io/cartography"

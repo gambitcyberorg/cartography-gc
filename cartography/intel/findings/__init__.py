@@ -3,6 +3,7 @@ import logging
 import neo4j
 
 import cartography.intel.findings.misconfig
+import cartography.intel.risk_scoring
 from cartography.config import Config
 from cartography.intel.findings.api_client import FINDINGS_TARGETS
 from cartography.intel.findings.api_client import FindingsApiClient
@@ -50,3 +51,5 @@ def start_findings_ingestion(neo4j_session: neo4j.Session, config: Config) -> No
             config=config,
             target=target,
         )
+
+    cartography.intel.risk_scoring.run_risk_scoring(neo4j_session, config)

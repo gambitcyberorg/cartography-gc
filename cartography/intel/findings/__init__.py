@@ -45,11 +45,18 @@ def start_findings_ingestion(neo4j_session: neo4j.Session, config: Config) -> No
 
     for target in targets_to_sync:
         logger.info("Syncing findings for target=%s", target)
-        cartography.intel.findings.misconfig.sync(
-            neo4j_session=neo4j_session,
-            client=client,
-            config=config,
-            target=target,
-        )
+        try:
+            cartography.intel.findings.misconfig.sync(
+                neo4j_session=neo4j_session,
+                client=client,
+                config=config,
+                target=target,
+            )
+        except Exception:
+            logger.exception(
+                "Findings ingestion failed for target=%s; propagating so sync status is marked Failed.",
+                target,
+            )
+            raise
 
     cartography.intel.risk_scoring.run_risk_scoring(neo4j_session, config)

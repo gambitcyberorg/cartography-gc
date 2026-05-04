@@ -80,18 +80,17 @@ def update_asset_sync_status(
 def update_findings_document(
     es_uri: str,
     document_id: str,
-    findings_count: int,
-    normalized_count: int,
-    stats: Dict[str, Any],
+    total_findings: int,
+    findings_mapped: int,
+    findings_not_mapped: int,
     target: str,
     finding_type: str,
     es_username: str | None = None,
     es_password: str | None = None,
 ) -> None:
     """
-    Merge findings metadata + stats into the existing asset-sync-info document
-    keyed by `document_id`. The payload is namespaced under `findings_data` so
-    prior fields on the document are preserved.
+    Merge findings metrics into the existing asset-sync-info document keyed by
+    `document_id`. The payload is namespaced under `findings_data`.
     """
     url = f"https://{es_uri}/asset-sync-info/_update/{document_id}"
 
@@ -105,9 +104,9 @@ def update_findings_document(
                 "target": target,
                 "type": finding_type,
                 "updated_at": _iso_now_millis(),
-                "stats": stats,
-                "count": findings_count,
-                "normalized_count": normalized_count,
+                "total_findings": total_findings,
+                "findings_mapped": findings_mapped,
+                "findings_not_mapped": findings_not_mapped,
             },
         },
     }
@@ -122,10 +121,12 @@ def update_findings_document(
         )
         response.raise_for_status()
         logger.info(
-            "Successfully updated asset-sync-info document '%s' with %d findings "
-            "(target=%s, type=%s).",
+            "Successfully updated asset-sync-info document '%s': "
+            "total=%d mapped=%d not_mapped=%d (target=%s, type=%s).",
             document_id,
-            findings_count,
+            total_findings,
+            findings_mapped,
+            findings_not_mapped,
             target,
             finding_type,
         )

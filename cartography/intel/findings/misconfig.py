@@ -141,7 +141,7 @@ def sync(
     finding_type: str = "misconfig",
     status_code: str = "FAIL",
 ) -> None:
-    records, raw_pages, stats = _collect(client, finding_type, target, status_code)
+    records, raw_pages = _collect(client, finding_type, target, status_code)
     logger.info(
         "Loading %d finding rows (from %d raw findings) into the graph",
         len(records),
@@ -150,9 +150,7 @@ def sync(
     mapping_stats = _load(neo4j_session, records, config.update_tag, finding_type, target)
     _persist_to_es(
         config,
-        records,
         raw_pages,
-        stats,
         mapping_stats,
         target,
         finding_type,
@@ -164,26 +162,16 @@ def _collect(
     finding_type: str,
     target: str,
     status_code: str,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     records: List[Dict[str, Any]] = []
     raw_pages: List[Dict[str, Any]] = []
-    stats: Dict[str, Any] = {}
 
-    for idx, page_resp in enumerate(
-        client.iter_all(finding_type, target, status_code)
-    ):
+    for page_resp in client.iter_all(finding_type, target, status_code):
         raw_pages.append(page_resp)
-        if idx == 0:
-            stats = {
-                "comprehensive_metrics": page_resp.get("comprehensive_metrics"),
-                "summary": page_resp.get("summary"),
-                "target_metrics": page_resp.get("target_metrics"),
-                "pagination": page_resp.get("pagination"),
-            }
         for raw in page_resp.get("findings") or []:
             records.extend(_normalize_finding(raw, finding_type, target))
 
-    return records, raw_pages, stats
+    return records, raw_pages
 
 
 def _load(
@@ -243,9 +231,7 @@ def _load(
 
 def _persist_to_es(
     config: Config,
-    records: List[Dict[str, Any]],
     raw_pages: List[Dict[str, Any]],
-    stats: Dict[str, Any],
     mapping_stats: Dict[str, int],
     target: str,
     finding_type: str,
@@ -257,22 +243,14 @@ def _persist_to_es(
         )
         return
 
-    all_findings: List[Dict[str, Any]] = []
-    for page in raw_pages:
-        all_findings.extend(page.get("findings") or [])
-
-    stats_with_mapping = dict(stats)
-    stats_with_mapping["ingestion_metrics"] = {
-        **mapping_stats,
-        "total_findings": len(all_findings),
-    }
+    total_findings = sum(len(page.get("findings") or []) for page in raw_pages)
 
     update_findings_document(
         es_uri=config.es_cluster_nodes,
         document_id=config.es_document_id,
-        findings_count=len(all_findings),
-        normalized_count=len(records),
-        stats=stats_with_mapping,
+        total_findings=total_findings,
+        findings_mapped=mapping_stats["findings_mapped"],
+        findings_not_mapped=mapping_stats["findings_not_mapped"],
         target=target,
         finding_type=finding_type,
         es_username=config.es_username,

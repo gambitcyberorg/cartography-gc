@@ -83,6 +83,9 @@ def update_findings_document(
     total_findings: int,
     findings_mapped: int,
     findings_not_mapped: int,
+    total_assets_with_findings: int,
+    assets_with_critical_findings: int,
+    assets_with_high_findings: int,
     target: str,
     finding_type: str,
     es_username: str | None = None,
@@ -107,6 +110,9 @@ def update_findings_document(
                 "total_findings": total_findings,
                 "findings_mapped": findings_mapped,
                 "findings_not_mapped": findings_not_mapped,
+                "total_assets_with_findings": total_assets_with_findings,
+                "assets_with_critical_findings": assets_with_critical_findings,
+                "assets_with_high_findings": assets_with_high_findings,
             },
         },
     }
@@ -122,11 +128,14 @@ def update_findings_document(
         response.raise_for_status()
         logger.info(
             "Successfully updated asset-sync-info document '%s': "
-            "total=%d mapped=%d not_mapped=%d (target=%s, type=%s).",
+            "total=%d mapped=%d not_mapped=%d assets=%d critical=%d high=%d (target=%s, type=%s).",
             document_id,
             total_findings,
             findings_mapped,
             findings_not_mapped,
+            total_assets_with_findings,
+            assets_with_critical_findings,
+            assets_with_high_findings,
             target,
             finding_type,
         )

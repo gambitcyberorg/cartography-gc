@@ -2,7 +2,6 @@ import logging
 from typing import Any
 from typing import Dict
 from typing import List
-from typing import Tuple
 
 import neo4j
 
@@ -65,13 +64,22 @@ OPTIONAL MATCH (asset)
 WHERE asset.id IN source_asset_ids
 WITH normalized_finding_ids, collect(DISTINCT asset.id) AS mapped_asset_ids
 UNWIND normalized_finding_ids AS finding_id
-OPTIONAL MATCH (:Finding {id: finding_id})<-[:HAS_FINDINGS]-()
-WITH mapped_asset_ids, normalized_finding_ids, finding_id, count(*) > 0 AS is_mapped
+OPTIONAL MATCH (:Finding {id: finding_id})<-[r:HAS_FINDINGS]-()
+WITH mapped_asset_ids, normalized_finding_ids, finding_id, count(r) > 0 AS is_mapped
 RETURN
     size(mapped_asset_ids) AS assets_pushed_to_memgraph,
     size(normalized_finding_ids) AS total_normalized_findings,
     count(CASE WHEN is_mapped THEN 1 END) AS findings_mapped,
     count(CASE WHEN NOT is_mapped THEN 1 END) AS findings_not_mapped
+"""
+
+_ASSET_STATS_QUERY = """
+MATCH (asset)-[:HAS_FINDINGS]->(f:Finding)
+WHERE f.type = $FINDING_TYPE AND f.target = $TARGET
+RETURN
+    count(DISTINCT asset) AS total_assets_with_findings,
+    count(DISTINCT CASE WHEN f.severity = 'CRITICAL' THEN asset END) AS assets_with_critical_findings,
+    count(DISTINCT CASE WHEN f.severity = 'HIGH' THEN asset END) AS assets_with_high_findings
 """
 
 
@@ -141,16 +149,11 @@ def sync(
     finding_type: str = "misconfig",
     status_code: str = "FAIL",
 ) -> None:
-    records, raw_pages = _collect(client, finding_type, target, status_code)
-    logger.info(
-        "Loading %d finding rows (from %d raw findings) into the graph",
-        len(records),
-        sum(len(p.get("findings") or []) for p in raw_pages),
-    )
+    records = _collect(client, finding_type, target, status_code)
+    logger.info("Loading %d normalized finding rows into the graph", len(records))
     mapping_stats = _load(neo4j_session, records, config.update_tag, finding_type, target)
     _persist_to_es(
         config,
-        raw_pages,
         mapping_stats,
         target,
         finding_type,
@@ -162,16 +165,14 @@ def _collect(
     finding_type: str,
     target: str,
     status_code: str,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
-    raw_pages: List[Dict[str, Any]] = []
 
     for page_resp in client.iter_all(finding_type, target, status_code):
-        raw_pages.append(page_resp)
         for raw in page_resp.get("findings") or []:
             records.extend(_normalize_finding(raw, finding_type, target))
 
-    return records, raw_pages
+    return records
 
 
 def _load(
@@ -226,12 +227,22 @@ def _load(
             TARGET=target,
         ).consume(),
     )
+
+    asset_result = neo4j_session.run(
+        _ASSET_STATS_QUERY,
+        FINDING_TYPE=finding_type,
+        TARGET=target,
+    ).single()
+    if asset_result:
+        mapping_stats["total_assets_with_findings"] = int(asset_result["total_assets_with_findings"] or 0)
+        mapping_stats["assets_with_critical_findings"] = int(asset_result["assets_with_critical_findings"] or 0)
+        mapping_stats["assets_with_high_findings"] = int(asset_result["assets_with_high_findings"] or 0)
+
     return mapping_stats
 
 
 def _persist_to_es(
     config: Config,
-    raw_pages: List[Dict[str, Any]],
     mapping_stats: Dict[str, int],
     target: str,
     finding_type: str,
@@ -243,14 +254,15 @@ def _persist_to_es(
         )
         return
 
-    total_findings = sum(len(page.get("findings") or []) for page in raw_pages)
-
     update_findings_document(
         es_uri=config.es_cluster_nodes,
         document_id=config.es_document_id,
-        total_findings=total_findings,
+        total_findings=mapping_stats["total_normalized_findings"],
         findings_mapped=mapping_stats["findings_mapped"],
         findings_not_mapped=mapping_stats["findings_not_mapped"],
+        total_assets_with_findings=mapping_stats.get("total_assets_with_findings", 0),
+        assets_with_critical_findings=mapping_stats.get("assets_with_critical_findings", 0),
+        assets_with_high_findings=mapping_stats.get("assets_with_high_findings", 0),
         target=target,
         finding_type=finding_type,
         es_username=config.es_username,

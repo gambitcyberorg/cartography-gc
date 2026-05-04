@@ -4,7 +4,6 @@ from datetime import datetime
 from datetime import timezone
 from typing import Any
 from typing import Dict
-from typing import List
 
 import requests
 
@@ -77,6 +76,40 @@ def update_asset_sync_status(
         )
 
 
+_FINDINGS_METRIC_KEYS = [
+    "total_findings",
+    "findings_mapped",
+    "findings_not_mapped",
+    "total_assets_with_findings",
+    "assets_with_critical_findings",
+    "assets_with_high_findings",
+]
+
+
+def _fetch_current_scan(
+    es_uri: str,
+    document_id: str,
+    auth: tuple | None,
+) -> Dict[str, Any]:
+    """Return the existing current_scan block from ES, or {} if absent/unreachable."""
+    try:
+        resp = requests.get(
+            f"https://{es_uri}/asset-sync-info/_doc/{document_id}",
+            auth=auth,
+            verify=_es_verify(),
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("_source", {}).get("findings_data", {}).get("current_scan", {})
+    except requests.exceptions.RequestException as e:
+        logger.warning(
+            "Could not fetch existing findings_data for document '%s' (drift will be zero): %s",
+            document_id,
+            e,
+        )
+    return {}
+
+
 def update_findings_document(
     es_uri: str,
     document_id: str,
@@ -92,34 +125,44 @@ def update_findings_document(
     es_password: str | None = None,
 ) -> None:
     """
-    Merge findings metrics into the existing asset-sync-info document keyed by
-    `document_id`. The payload is namespaced under `findings_data`.
+    Update findings_data in the asset-sync-info document with current_scan,
+    last_scan (promoted from the previous current_scan), and drift between them.
     """
-    url = f"https://{es_uri}/asset-sync-info/_update/{document_id}"
+    auth = (es_username, es_password) if es_username and es_password else None
 
-    auth = None
-    if es_username and es_password:
-        auth = (es_username, es_password)
+    last_scan = _fetch_current_scan(es_uri, document_id, auth)
+
+    current_scan: Dict[str, Any] = {
+        "total_findings": total_findings,
+        "findings_mapped": findings_mapped,
+        "findings_not_mapped": findings_not_mapped,
+        "total_assets_with_findings": total_assets_with_findings,
+        "assets_with_critical_findings": assets_with_critical_findings,
+        "assets_with_high_findings": assets_with_high_findings,
+        "scanned_at": _iso_now_millis(),
+    }
+
+    drift = {
+        key: current_scan[key] - last_scan.get(key, 0)
+        for key in _FINDINGS_METRIC_KEYS
+    }
 
     payload = {
         "doc": {
             "findings_data": {
                 "target": target,
                 "type": finding_type,
-                "updated_at": _iso_now_millis(),
-                "total_findings": total_findings,
-                "findings_mapped": findings_mapped,
-                "findings_not_mapped": findings_not_mapped,
-                "total_assets_with_findings": total_assets_with_findings,
-                "assets_with_critical_findings": assets_with_critical_findings,
-                "assets_with_high_findings": assets_with_high_findings,
+                "updated_at": current_scan["scanned_at"],
+                "current_scan": current_scan,
+                "last_scan": last_scan or None,
+                "drift": drift,
             },
         },
     }
 
     try:
         response = requests.post(
-            url,
+            f"https://{es_uri}/asset-sync-info/_update/{document_id}",
             json=payload,
             auth=auth,
             verify=_es_verify(),
@@ -127,17 +170,24 @@ def update_findings_document(
         )
         response.raise_for_status()
         logger.info(
-            "Successfully updated asset-sync-info document '%s': "
-            "total=%d mapped=%d not_mapped=%d assets=%d critical=%d high=%d (target=%s, type=%s).",
+            "Updated findings_data for document '%s' (target=%s, type=%s): "
+            "total=%d mapped=%d not_mapped=%d assets=%d critical=%d high=%d | "
+            "drift: total=%+d mapped=%+d not_mapped=%+d assets=%+d critical=%+d high=%+d.",
             document_id,
+            target,
+            finding_type,
             total_findings,
             findings_mapped,
             findings_not_mapped,
             total_assets_with_findings,
             assets_with_critical_findings,
             assets_with_high_findings,
-            target,
-            finding_type,
+            drift["total_findings"],
+            drift["findings_mapped"],
+            drift["findings_not_mapped"],
+            drift["total_assets_with_findings"],
+            drift["assets_with_critical_findings"],
+            drift["assets_with_high_findings"],
         )
     except requests.exceptions.RequestException as e:
         logger.warning(
